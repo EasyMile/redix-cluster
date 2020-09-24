@@ -169,7 +169,7 @@ defmodule RedixCluster.Monitor do
   end
 
   defp cluster_info_from_single_node(node) do
-    {false, [[0, @redis_cluster_hash_slots - 1, [List.to_string(node.host), node.port]]]}
+    {false, [[0, @redis_cluster_hash_slots - 1, [node.host, node.port]]]}
   end
 
   defp parse_cluster_slot({cluster_slot, index}) do
