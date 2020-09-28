@@ -1,4 +1,5 @@
 defmodule RedixCluster.Monitor do
+  require Logger
   @moduledoc """
   ## RedixCluster.Monitor
 
@@ -10,6 +11,8 @@ defmodule RedixCluster.Monitor do
   @type conn :: module | atom | pid
 
   @redis_cluster_hash_slots 16_384
+
+  @reconnect_interval 2_000
 
   defmodule State do
     @moduledoc """
@@ -86,28 +89,41 @@ defmodule RedixCluster.Monitor do
 
   def handle_cast(_msg, state), do: {:noreply, state}
 
+  def handle_info({:connect, cluster_nodes}, %State{conn_name: conn_name}) do
+    {:noreply, do_connect(conn_name, cluster_nodes)}
+  end
+
   def handle_info(_info, state), do: {:noreply, state}
 
   defp do_connect(conn_name, cluster_nodes) do
     %State{conn_name: conn_name, cluster_nodes: cluster_nodes} |> reload_slots_map
   end
 
-  defp reload_slots_map(%State{conn_name: conn_name} = state) do
-    for slots_map <- state.slots_maps, do: close_connection(slots_map)
-    {is_cluster, cluster_info} = get_cluster_info(state.cluster_nodes)
-    slots_maps = cluster_info |> parse_slots_maps |> connect_all_slots(conn_name)
-    slots = create_slots_cache(slots_maps)
+  defp reload_slots_map(%State{conn_name: conn_name, slots_maps: slots_maps, cluster_nodes: cluster_nodes, version: version} = state) do
+    for slots_map <- slots_maps, do: close_connection(slots_map)
 
-    new_state = %State{
-      state
-      | slots: slots,
-        slots_maps: slots_maps,
-        version: state.version + 1,
-        is_cluster: is_cluster
-    }
+    case get_cluster_info(cluster_nodes) do
+      {:ok, is_cluster, cluster_info} ->
+        Logger.info("Redis cluster info fetched", cluster_info: cluster_info)
+        slots_maps = cluster_info |> parse_slots_maps |> connect_all_slots(conn_name)
+        slots = create_slots_cache(slots_maps)
 
-    true = :ets.insert(conn_name, [{:cluster_state, new_state}])
-    new_state
+        new_state = %State{
+          state
+          | slots: slots,
+            slots_maps: slots_maps,
+            version: version + 1,
+            is_cluster: is_cluster
+        }
+
+        true = :ets.insert(conn_name, [{:cluster_state, new_state}])
+        new_state
+
+      {:error, error} ->
+        Logger.error("Fail to reload Redis slots", error: error)
+        Process.send_after(self(), {:connect, cluster_nodes}, @reconnect_interval)
+        state
+    end
   end
 
   defp close_connection(slots_map) do
@@ -116,21 +132,25 @@ defmodule RedixCluster.Monitor do
     _ -> :ok
   end
 
-  defp get_cluster_info([]), do: throw({:error, :cannot_connect_to_cluster})
+  defp get_cluster_info([]), do: {:error, :cannot_connect_to_cluster}
 
   defp get_cluster_info([node | restnodes]) do
+    Logger.info("Trying to get Redis cluster info")
     case start_link_redix(node.host, node.port) do
       {:ok, conn} ->
         case Redix.command(conn, ~w(CLUSTER SLOTS), []) do
           {:ok, cluster_info} ->
             Redix.stop(conn)
-            {true, cluster_info}
+            {:ok, true, cluster_info}
 
           {:error, %Redix.Error{message: "ERR unknown command 'CLUSTER'"}} ->
             cluster_info_from_single_node(node)
 
           {:error, %Redix.Error{message: "ERR This instance has cluster support disabled"}} ->
             cluster_info_from_single_node(node)
+
+          {:error, %Redix.ConnectionError{reason: :closed}} ->
+            {:error, :cannot_connect_to_cluster}
         end
 
       _ ->
@@ -170,7 +190,7 @@ defmodule RedixCluster.Monitor do
   end
 
   defp cluster_info_from_single_node(node) do
-    {false, [[0, @redis_cluster_hash_slots - 1, [node.host, node.port]]]}
+    {:ok, false, [[0, @redis_cluster_hash_slots - 1, [node.host, node.port]]]}
   end
 
   defp parse_cluster_slot({cluster_slot, index}) do
