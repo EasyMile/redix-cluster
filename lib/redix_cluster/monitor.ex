@@ -145,6 +145,7 @@ defmodule RedixCluster.Monitor do
     cluster_info
     |> Stream.with_index()
     |> Stream.map(&parse_cluster_slot/1)
+    |> Stream.reject(&is_nil/1)
     |> Enum.to_list()
   end
 
@@ -175,13 +176,19 @@ defmodule RedixCluster.Monitor do
   defp parse_cluster_slot({cluster_slot, index}) do
     [start_slot, end_slot | nodes] = cluster_slot
 
-    %{
-      index: index + 1,
-      name: get_slot_name(start_slot, end_slot),
-      start_slot: start_slot,
-      end_slot: end_slot,
-      node: parse_master_node(nodes)
-    }
+    case parse_master_node(nodes) do
+      nil ->
+        nil
+
+      node ->
+        %{
+          index: index + 1,
+          name: get_slot_name(start_slot, end_slot),
+          start_slot: start_slot,
+          end_slot: end_slot,
+          node: node
+        }
+    end
   end
 
   defp connect_node(cache_name, node) do
@@ -195,6 +202,11 @@ defmodule RedixCluster.Monitor do
     [start_slot, ":", end_slot]
     |> Enum.join()
     |> String.to_atom()
+  end
+
+  # Handle empty hosts, aka disconnected node
+  defp parse_master_node([["", 0| _] | _]) do
+    nil
   end
 
   defp parse_master_node([[master_host, master_port | _] | _]) do
