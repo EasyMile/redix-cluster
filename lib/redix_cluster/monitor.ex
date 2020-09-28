@@ -46,15 +46,20 @@ defmodule RedixCluster.Monitor do
   @spec get_slot_cache(conn) ::
           {:cluster, [binary], [integer], integer} | {:not_cluster, integer, atom}
   def get_slot_cache(conn) do
-    [{:cluster_state, state}] = :ets.lookup(conn, :cluster_state)
+    case :ets.lookup(conn, :cluster_state) do
+      [{:cluster_state, state}] ->
 
-    case state.is_cluster do
-      true ->
-        {:cluster, state.slots_maps, state.slots, state.version}
+        case state.is_cluster do
+          true ->
+            {:cluster, state.slots_maps, state.slots, state.version}
 
-      false ->
-        [slots_map] = state.slots_maps
-        {:not_cluster, state.version, slots_map.node.pool}
+          false ->
+            [slots_map] = state.slots_maps
+            {:not_cluster, state.version, slots_map.node.pool}
+        end
+
+      _ ->
+        {:not_cluster, :error, :not_connected}
     end
   end
 
