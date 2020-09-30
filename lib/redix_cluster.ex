@@ -63,6 +63,8 @@ defmodule RedixCluster do
           {:ok, [Redix.Protocol.redis_value()]} | {:error, atom}
   def pipeline(conn, commands, opts \\ []), do: pipeline(conn, commands, opts, 0, 0)
 
+  def re_connect(conn), do: RedixCluster.Monitor.connect(conn)
+
   defp command(_conn, _command, _opts, count, _delay) when count >= @max_retry,
     do: {:error, :no_connection}
 

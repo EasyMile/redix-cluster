@@ -12,8 +12,6 @@ defmodule RedixCluster.Monitor do
 
   @redis_cluster_hash_slots 16_384
 
-  @reconnect_interval 2_000
-
   defmodule State do
     @moduledoc """
     ### RedixCluster.Monitor.State
@@ -25,14 +23,12 @@ defmodule RedixCluster.Monitor do
               slots: [],
               slots_maps: [],
               version: 0,
-              is_cluster: true
+              is_cluster: true,
+              is_connected: false
   end
 
-  @spec connect(conn, term) :: :ok | {:error, :connect_to_empty_nodes}
-  def connect(_conn_name, []), do: {:error, :connect_to_empty_nodes}
-
-  def connect(conn_name, cluster_nodes),
-    do: GenServer.call(Module.concat(conn_name, RedixCluster.Monitor), {:connect, cluster_nodes})
+  def connect(conn_name),
+    do: GenServer.call(Module.concat(conn_name, RedixCluster.Monitor), :connect)
 
   @spec refresh_mapping(conn, integer) :: :ok | {:ignore, String.t()}
   def refresh_mapping(conn_name, version),
@@ -82,16 +78,19 @@ defmodule RedixCluster.Monitor do
     {:reply, {:ignore, "wrong version#{version}!=#{old_version}"}, state}
   end
 
-  def handle_call({:connect, cluster_nodes}, _from, %State{conn_name: conn_name} = _state),
-    do: {:reply, :ok, do_connect(conn_name, cluster_nodes)}
+  def handle_call(:connect, _from, %State{conn_name: conn_name, cluster_nodes: cluster_nodes} = _state) do
+    case do_connect(conn_name, cluster_nodes) do
+      %State{is_connected: true} = state ->
+        {:reply, :ok, state}
+
+        %State{is_connected: false} = state ->
+          {:reply, :not_connected, state}
+    end
+  end
 
   def handle_call(request, _from, state), do: {:reply, {:ignored, request}, state}
 
   def handle_cast(_msg, state), do: {:noreply, state}
-
-  def handle_info({:connect, cluster_nodes}, %State{conn_name: conn_name}) do
-    {:noreply, do_connect(conn_name, cluster_nodes)}
-  end
 
   def handle_info(_info, state), do: {:noreply, state}
 
@@ -113,7 +112,8 @@ defmodule RedixCluster.Monitor do
           | slots: slots,
             slots_maps: slots_maps,
             version: version + 1,
-            is_cluster: is_cluster
+            is_cluster: is_cluster,
+            is_connected: true
         }
 
         true = :ets.insert(conn_name, [{:cluster_state, new_state}])
@@ -121,8 +121,7 @@ defmodule RedixCluster.Monitor do
 
       {:error, error} ->
         Logger.error("Fail to reload Redis slots", error: error)
-        Process.send_after(self(), {:connect, cluster_nodes}, @reconnect_interval)
-        state
+        %State{state | is_connected: false}
     end
   end
 
