@@ -15,27 +15,29 @@ defmodule RedixCluster do
   @max_retry 1_000
   @redis_retry_delay 100
 
+  defmodule Options do
+    @derive {Inspect, only: [:conn_name, :host, :port]}
+    defstruct [conn_name: RedixCluster, host: nil, port: nil, password: nil]
+  end
   @doc """
     Starts RedixCluster as a supervisor in your supervision tree.
   """
-  @spec start_link(opts :: Keyword.t()) :: Supervisor.on_start()
-  def start_link(opts \\ []) do
-    {conn_name, _opts} = Keyword.pop(opts, :conn_name, RedixCluster)
+  @spec start_link(opts :: Options.t()) :: Supervisor.on_start()
+  def start_link(%Options{conn_name: conn_name} = options) do
     name = Module.concat(conn_name, Main)
-    Supervisor.start_link(__MODULE__, conn_name, name: name)
+    Supervisor.start_link(__MODULE__, options, name: name)
   end
 
-  @spec init(conn_name :: conn) :: Supervisor.on_start()
-  def init(conn_name) do
+  def init(%Options{conn_name: conn_name} = options) do
     children = [
       %{
         id: Module.concat(conn_name, Pool),
-        start: {RedixCluster.Pool, :start_link, [[conn_name: conn_name]]},
+        start: {RedixCluster.Pool, :start_link, [options]},
         type: :supervisor
       },
       %{
         id: Module.concat(conn_name, RedixCluster.Monitor),
-        start: {RedixCluster.Monitor, :start_link, [[conn_name: conn_name]]},
+        start: {RedixCluster.Monitor, :start_link, [options]},
         type: :worker
       }
     ]

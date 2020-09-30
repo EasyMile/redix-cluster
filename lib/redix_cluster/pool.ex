@@ -16,9 +16,8 @@ defmodule RedixCluster.Pool do
     Application.get_env(:redix_cluster_remastered, key, default)
   end
 
-  @spec start_link(Keyword.t()) :: Supervisor.on_start()
-  def start_link(opts) do
-    {conn_name, _opts} = Keyword.pop(opts, :conn_name, RedixCluster)
+  @spec start_link(RedixCluster.Options.t()) :: Supervisor.on_start()
+  def start_link(%RedixCluster.Options{conn_name: conn_name}) do
     table_name = Module.concat(conn_name, Pool)
     :ets.new(table_name, [:set, :named_table, :public])
     Supervisor.start_link(__MODULE__, nil, name: table_name)

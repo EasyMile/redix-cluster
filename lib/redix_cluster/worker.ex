@@ -7,10 +7,6 @@ defmodule RedixCluster.Worker do
 
   use GenServer
 
-  def get_env(key, default \\ nil) do
-    Application.get_env(:redix_cluster_remastered, key, default)
-  end
-
   def start_link(args), do: GenServer.start_link(__MODULE__, args)
 
   def init(worker) do

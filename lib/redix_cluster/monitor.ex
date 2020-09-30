@@ -28,10 +28,6 @@ defmodule RedixCluster.Monitor do
               is_cluster: true
   end
 
-  def get_env(key, default \\ nil) do
-    Application.get_env(:redix_cluster_remastered, key, default)
-  end
-
   @spec connect(conn, term) :: :ok | {:error, :connect_to_empty_nodes}
   def connect(_conn_name, []), do: {:error, :connect_to_empty_nodes}
 
@@ -63,20 +59,19 @@ defmodule RedixCluster.Monitor do
     end
   end
 
-  @spec start_link(Keyword.t()) :: GenServer.on_start()
-  def start_link(opts) do
-    {conn_name, _opts} = Keyword.pop(opts, :conn_name, RedixCluster)
+  @spec start_link(RedixCluster.Options.t()) :: GenServer.start_link()
+  def start_link(%RedixCluster.Options{conn_name: conn_name} = options) do
     name = Module.concat(conn_name, RedixCluster.Monitor)
-    GenServer.start_link(__MODULE__, conn_name, name: name)
+    GenServer.start_link(__MODULE__, options, name: name)
   end
 
-  def init(conn_name) do
+  def init(%RedixCluster.Options{conn_name: conn_name, host: host, port: port}) do
     :ets.new(conn_name, [:protected, :set, :named_table, {:read_concurrency, true}])
 
-    case get_env(:cluster_nodes, []) do
-      [] -> {:ok, %State{conn_name: conn_name}}
-      cluster_nodes -> {:ok, do_connect(conn_name, cluster_nodes)}
-    end
+    cluster_nodes = [
+      %{host: host, port: port}
+    ]
+    {:ok, do_connect(conn_name, cluster_nodes)}
   end
 
   def handle_call({:reload_slots_map, version}, _from, %State{version: version} = state) do
